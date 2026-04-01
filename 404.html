@@ -1,0 +1,1334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>RC Sample Scanner</title>
+<link rel="manifest" href="./manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="RC Scanner">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<meta name="theme-color" content="#f5a623">
+<!-- QuaggaJS for barcode decoding — reliable on iOS Safari -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700;900&family=Barlow+Condensed:wght@400;700;900&display=swap');
+
+  :root {
+    --bg: #0e1117;
+    --surface: #161b27;
+    --surface2: #1e2535;
+    --border: #2a3347;
+    --accent: #f5a623;
+    --accent2: #e8522a;
+    --ok: #2ecc71;
+    --miss: #e74c3c;
+    --extra: #9b59b6;
+    --warn: #f39c12;
+    --text: #d8e2f0;
+    --text-dim: #6b7a99;
+    --mono: 'Share Tech Mono', monospace;
+    --sans: 'Barlow', sans-serif;
+    --cond: 'Barlow Condensed', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Noise texture overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 1000;
+    opacity: 0.4;
+  }
+
+  /* ── HEADER ── */
+  header {
+    background: var(--surface);
+    border-bottom: 2px solid var(--accent);
+    padding: 0 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    height: 56px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo-mark {
+    width: 32px;
+    height: 32px;
+    background: var(--accent);
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .logo-mark svg { width: 16px; height: 16px; fill: #000; }
+
+  header h1 {
+    font-family: var(--cond);
+    font-weight: 900;
+    font-size: 20px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+
+  header h1 span { color: var(--accent); }
+
+  .header-status {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    text-align: right;
+    line-height: 1.4;
+  }
+
+  .offline-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #1a2a1a;
+    border: 1px solid var(--ok);
+    color: var(--ok);
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 2px;
+    letter-spacing: 1px;
+  }
+
+  .offline-badge::before {
+    content: '';
+    width: 6px; height: 6px;
+    background: var(--ok);
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* ── SCREENS ── */
+  .screen { display: none; padding: 20px; max-width: 700px; margin: 0 auto; }
+  .screen.active { display: block; }
+
+  /* ── SETUP SCREEN ── */
+  .setup-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--accent);
+    padding: 28px;
+    margin-top: 24px;
+  }
+
+  .setup-card h2 {
+    font-family: var(--cond);
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    color: var(--text);
+  }
+
+  .setup-card p {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 28px;
+  }
+
+  .field-group { margin-bottom: 20px; }
+
+  label {
+    display: block;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+  }
+
+  input[type="text"], input[type="number"] {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 0;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 18px;
+    padding: 12px 14px;
+    outline: none;
+    transition: border-color 0.2s;
+    -webkit-appearance: none;
+  }
+
+  input[type="text"]:focus, input[type="number"]:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(245,166,35,0.15);
+  }
+
+  .input-hint {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 5px;
+    font-family: var(--mono);
+  }
+
+  /* ── BUTTONS ── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 13px 24px;
+    font-family: var(--cond);
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    border: none;
+    border-radius: 0;
+    transition: all 0.15s;
+    outline: none;
+    white-space: nowrap;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #000;
+    width: 100%;
+    margin-top: 8px;
+    font-size: 16px;
+    padding: 16px;
+  }
+
+  .btn-primary:hover { background: #ffb940; transform: translateY(-1px); }
+  .btn-primary:active { transform: translateY(0); }
+
+  .btn-secondary {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    flex: 1;
+  }
+
+  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+
+  .btn-danger {
+    background: transparent;
+    color: var(--miss);
+    border: 1px solid var(--miss);
+  }
+
+  .btn-danger:hover { background: var(--miss); color: #fff; }
+
+  /* ── SCAN SCREEN ── */
+  .scan-header {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 16px 20px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .hole-id {
+    font-family: var(--mono);
+    font-size: 24px;
+    color: var(--accent);
+    font-weight: bold;
+  }
+
+  .depth-info {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.7;
+  }
+
+  /* ── STATS BAR ── */
+  .stats-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .stat-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 12px 10px;
+    text-align: center;
+  }
+
+  .stat-num {
+    font-family: var(--mono);
+    font-size: 26px;
+    font-weight: bold;
+    line-height: 1;
+  }
+
+  .stat-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  .stat-box.ok .stat-num { color: var(--ok); }
+  .stat-box.miss .stat-num { color: var(--miss); }
+  .stat-box.extra .stat-num { color: var(--extra); }
+  .stat-box.total .stat-num { color: var(--text); }
+
+  /* ── SCAN INPUT AREA ── */
+  .scan-area {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--accent2);
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+
+  .scan-area h3 {
+    font-family: var(--cond);
+    font-size: 13px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+  }
+
+  .scan-input-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  #scanInput {
+    flex: 1;
+    font-size: 15px;
+    padding: 12px 14px;
+  }
+
+  .scan-btn-group {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .btn-scan-camera {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    flex: 1;
+    padding: 11px 14px;
+    font-size: 13px;
+  }
+
+  .btn-scan-camera:hover { border-color: var(--accent); color: var(--accent); }
+
+  .btn-submit-scan {
+    background: var(--accent2);
+    color: #fff;
+    padding: 11px 20px;
+    font-size: 14px;
+  }
+
+  .btn-submit-scan:hover { background: #ff6a3d; }
+
+  /* Feedback flash */
+  .scan-feedback {
+    min-height: 36px;
+    padding: 8px 12px;
+    font-family: var(--mono);
+    font-size: 13px;
+    border-radius: 0;
+    margin-top: 10px;
+    display: none;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .scan-feedback.ok { display: flex; background: #0d2b1a; border: 1px solid var(--ok); color: var(--ok); }
+  .scan-feedback.miss { display: flex; background: #2b0d0d; border: 1px solid var(--miss); color: var(--miss); }
+  .scan-feedback.extra { display: flex; background: #1e0d2b; border: 1px solid var(--extra); color: var(--extra); }
+  .scan-feedback.warn { display: flex; background: #2b200d; border: 1px solid var(--warn); color: var(--warn); }
+
+  /* ── SAMPLE GRID ── */
+  .sample-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .sample-list-header h3 {
+    font-family: var(--cond);
+    font-size: 13px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .filter-tabs {
+    display: flex;
+    gap: 4px;
+  }
+
+  .filter-tab {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    letter-spacing: 1px;
+    transition: all 0.15s;
+  }
+
+  .filter-tab.active { background: var(--accent); border-color: var(--accent); color: #000; }
+  .filter-tab:hover:not(.active) { border-color: var(--text-dim); color: var(--text); }
+
+  .sample-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 6px;
+    max-height: 340px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  .sample-grid::-webkit-scrollbar { width: 4px; }
+  .sample-grid::-webkit-scrollbar-track { background: var(--bg); }
+  .sample-grid::-webkit-scrollbar-thumb { background: var(--border); }
+
+  .sample-chip {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    font-family: var(--mono);
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    transition: border-color 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .sample-chip::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+  }
+
+  .sample-chip.verified { border-color: #1a3a2a; }
+  .sample-chip.verified::before { background: var(--ok); }
+  .sample-chip.verified .chip-id { color: var(--ok); }
+
+  .sample-chip.missing { border-color: #3a1a1a; }
+  .sample-chip.missing::before { background: var(--miss); }
+  .sample-chip.missing .chip-id { color: var(--miss); }
+
+  .sample-chip.extra { border-color: #2a1a3a; }
+  .sample-chip.extra::before { background: var(--extra); }
+  .sample-chip.extra .chip-id { color: var(--extra); }
+
+  .chip-icon { font-size: 12px; flex-shrink: 0; }
+  .chip-id { font-size: 11px; line-height: 1.3; }
+  .chip-dup { font-size: 9px; color: var(--accent); margin-left: auto; flex-shrink: 0; }
+
+  /* ── ACTION ROW ── */
+  .action-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+  }
+
+  /* ── CAMERA MODAL ── */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 200;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .modal-overlay.active { display: flex; }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--accent);
+    width: 100%;
+    max-width: 500px;
+    padding: 24px;
+  }
+
+  .modal h2 {
+    font-family: var(--cond);
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+
+  #cameraPreview {
+    width: 100%;
+    border: 1px solid var(--border);
+    background: #000;
+    display: block;
+    max-height: 300px;
+    object-fit: cover;
+  }
+
+  .camera-note {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 10px;
+    font-family: var(--mono);
+    line-height: 1.5;
+  }
+
+  .modal-btns { display: flex; gap: 10px; margin-top: 16px; }
+
+  /* ── SUMMARY SCREEN ── */
+  .summary-hero {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--ok);
+    padding: 24px;
+    text-align: center;
+    margin-bottom: 16px;
+  }
+
+  .summary-hero.has-issues { border-top-color: var(--miss); }
+
+  .summary-icon { font-size: 48px; margin-bottom: 8px; }
+
+  .summary-hero h2 {
+    font-family: var(--cond);
+    font-weight: 900;
+    font-size: 28px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  .summary-hero p {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-top: 6px;
+  }
+
+  .summary-stats {
+    display: grid;
+    grid-template-columns: repeat(4,1fr);
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .missing-list, .extra-list {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+
+  .missing-list h3, .extra-list h3 {
+    font-family: var(--cond);
+    font-size: 13px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  .missing-list h3 { color: var(--miss); }
+  .extra-list h3 { color: var(--extra); }
+
+  .miss-item {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 5px 0;
+    border-bottom: 1px solid var(--border);
+    color: var(--miss);
+  }
+
+  .miss-item:last-child { border-bottom: none; }
+  .extra-item { color: var(--extra); }
+
+  .summary-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  /* ── RESPONSIVE ── */
+  @media(max-width:480px) {
+    .stats-bar { grid-template-columns: repeat(2,1fr); }
+    .summary-stats { grid-template-columns: repeat(2,1fr); }
+    .sample-grid { grid-template-columns: 1fr 1fr; }
+    .scan-input-row { flex-direction: column; }
+  }
+
+  /* ── ANIMATIONS ── */
+  .screen.active { animation: fadeUp 0.25s ease; }
+  @keyframes fadeUp {
+    from { opacity:0; transform: translateY(10px); }
+    to   { opacity:1; transform: translateY(0); }
+  }
+
+  @keyframes scanMove {
+    0%   { top: 10%; }
+    50%  { top: 85%; }
+    100% { top: 10%; }
+  }
+
+  .flash-scan {
+    animation: flashBorder 0.4s ease;
+  }
+
+  @keyframes flashBorder {
+    0%   { box-shadow: 0 0 0 3px var(--ok); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+
+  /* Progress bar */
+  .progress-bar-wrap {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    height: 6px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--ok), #27ae60);
+    transition: width 0.4s ease;
+  }
+
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-mark">
+    <svg viewBox="0 0 24 24"><path d="M3 5h18v2H3zm0 6h18v2H3zm0 6h18v2H3z"/></svg>
+  </div>
+  <h1>RC <span>Sample</span> Scanner</h1>
+  <div class="header-status">
+    <div class="offline-badge">OFFLINE READY</div>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════ SETUP SCREEN ══════════════════════════════════ -->
+<div id="screenSetup" class="screen active">
+  <div class="setup-card">
+    <h2>New Session</h2>
+    <p>Enter hole details to generate the expected sample list. No internet connection required.</p>
+
+    <div class="field-group">
+      <label>Hole Number</label>
+      <input type="text" id="holeNumber" placeholder="e.g. RR25-22" autocomplete="off" spellcheck="false">
+      <div class="input-hint">Used as prefix for all sample IDs</div>
+    </div>
+
+    <div class="field-group">
+      <label>Expected Depth (ft)</label>
+      <input type="number" id="expectedDepth" placeholder="e.g. 200" min="5" step="5">
+      <div class="input-hint">Samples generated at 5 ft intervals. DUP at every 100 ft.</div>
+    </div>
+
+    <button class="btn btn-primary" onclick="startSession()">
+      ▶ &nbsp;START SCANNING SESSION
+    </button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════ SCAN SCREEN ══════════════════════════════════ -->
+<div id="screenScan" class="screen">
+
+  <div class="scan-header">
+    <div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);letter-spacing:1px;margin-bottom:4px;">ACTIVE HOLE</div>
+      <div class="hole-id" id="displayHole">—</div>
+    </div>
+    <div class="depth-info" id="displayDepth"></div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-bar">
+    <div class="stat-box total">
+      <div class="stat-num" id="statTotal">0</div>
+      <div class="stat-label">Expected</div>
+    </div>
+    <div class="stat-box ok">
+      <div class="stat-num" id="statVerified">0</div>
+      <div class="stat-label">Verified</div>
+    </div>
+    <div class="stat-box miss">
+      <div class="stat-num" id="statMissing">0</div>
+      <div class="stat-label">Missing</div>
+    </div>
+    <div class="stat-box extra">
+      <div class="stat-num" id="statExtra">0</div>
+      <div class="stat-label">Extra</div>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-bar-wrap">
+    <div class="progress-bar-fill" id="progressFill" style="width:0%"></div>
+  </div>
+
+  <!-- Scan Input -->
+  <div class="scan-area">
+    <h3>Scan Sample</h3>
+    <div class="scan-input-row">
+      <input type="text" id="scanInput" placeholder="Scan barcode or type sample ID…" autocomplete="off" spellcheck="false">
+      <button class="btn btn-submit-scan" onclick="submitScan()">ENTER</button>
+    </div>
+    <div class="scan-btn-group">
+      <button class="btn btn-scan-camera" onclick="openCamera()">
+        📷 &nbsp;Camera Scan
+      </button>
+      <button class="btn btn-scan-camera" onclick="focusScanInput()" style="border-color:var(--accent);color:var(--accent);">
+        🔷 &nbsp;Bluetooth Scanner
+      </button>
+    </div>
+    <div class="scan-feedback" id="scanFeedback"></div>
+  </div>
+
+  <!-- Sample List -->
+  <div class="sample-list-header">
+    <h3>Sample List</h3>
+    <div class="filter-tabs">
+      <button class="filter-tab active" onclick="setFilter('all',this)">All</button>
+      <button class="filter-tab" onclick="setFilter('missing',this)" style="color:var(--miss)">Missing</button>
+      <button class="filter-tab" onclick="setFilter('verified',this)" style="color:var(--ok)">OK</button>
+      <button class="filter-tab" onclick="setFilter('extra',this)" style="color:var(--extra)">Extra</button>
+    </div>
+  </div>
+
+  <div class="sample-grid" id="sampleGrid"></div>
+
+  <div class="action-row">
+    <button class="btn btn-primary" style="flex:2" onclick="goToSummary()">VIEW SUMMARY →</button>
+    <button class="btn btn-danger" onclick="resetSession()">NEW SESSION</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════ SUMMARY SCREEN ══════════════════════════════════ -->
+<div id="screenSummary" class="screen">
+
+  <div class="summary-hero" id="summaryHero">
+    <div class="summary-icon" id="summaryIcon">✅</div>
+    <h2 id="summaryTitle">All Samples Verified</h2>
+    <p id="summarySubtitle"></p>
+  </div>
+
+  <div class="summary-stats" id="summaryStats"></div>
+
+  <div id="missingSection" class="missing-list" style="display:none">
+    <h3>⚠ Missing Samples</h3>
+    <div id="missingItems"></div>
+  </div>
+
+  <div id="extraSection" class="extra-list" style="display:none">
+    <h3>⬡ Extra / Unrecognized Samples</h3>
+    <div id="extraItems"></div>
+  </div>
+
+  <div class="summary-actions">
+    <button class="btn btn-secondary" style="flex:1" onclick="showScreen('screenScan')">← BACK TO SCANNING</button>
+    <button class="btn btn-primary" style="flex:1" onclick="exportSummary()">EXPORT REPORT</button>
+    <button class="btn btn-danger" onclick="resetSession()">NEW SESSION</button>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════ CAMERA MODAL ══════════════════════════════════ -->
+<div class="modal-overlay" id="cameraModal">
+  <div class="modal">
+    <h2>📷 Camera Scanner</h2>
+
+    <!-- Video viewfinder with scan line -->
+    <div style="position:relative;width:100%;background:#000;border:1px solid var(--border);">
+      <video id="cameraPreview" autoplay playsinline muted style="width:100%;display:block;max-height:260px;object-fit:cover;"></video>
+      <!-- Scan line animation -->
+      <div id="scanLine" style="position:absolute;left:0;right:0;height:2px;background:var(--accent);opacity:0.85;animation:scanMove 2s linear infinite;top:0;"></div>
+      <!-- Corner brackets overlay -->
+      <div style="position:absolute;inset:0;pointer-events:none;">
+        <div style="position:absolute;top:16px;left:16px;width:32px;height:32px;border-top:3px solid var(--accent);border-left:3px solid var(--accent);"></div>
+        <div style="position:absolute;top:16px;right:16px;width:32px;height:32px;border-top:3px solid var(--accent);border-right:3px solid var(--accent);"></div>
+        <div style="position:absolute;bottom:16px;left:16px;width:32px;height:32px;border-bottom:3px solid var(--accent);border-left:3px solid var(--accent);"></div>
+        <div style="position:absolute;bottom:16px;right:16px;width:32px;height:32px;border-bottom:3px solid var(--accent);border-right:3px solid var(--accent);"></div>
+      </div>
+    </div>
+
+    <div id="cameraStatus" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);padding:8px 0;min-height:28px;text-align:center;">
+      Initializing camera…
+    </div>
+
+    <p class="camera-note">
+      Point camera at barcode — it decodes automatically.<br>
+      <span style="color:var(--accent)">Tip:</span> Hold steady and ensure barcode is well-lit.
+    </p>
+
+    <div class="modal-btns">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeCamera()">CANCEL</button>
+    </div>
+
+    <!-- Manual fallback -->
+    <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:14px;">
+      <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);letter-spacing:1px;margin-bottom:6px;">MANUAL ENTRY FALLBACK</div>
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="cameraManualInput" placeholder="Type sample ID here…" style="flex:1;font-size:14px;" autocomplete="off" spellcheck="false">
+        <button class="btn btn-submit-scan" style="padding:11px 16px;" onclick="submitCameraManual()">GO</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════
+let state = {
+  hole: '',
+  expectedDepth: 0,
+  expectedSamples: [],   // array of { id, isDup, status: 'missing'|'verified' }
+  extraSamples: [],      // array of scanned IDs not in expected
+  currentFilter: 'all'
+};
+
+// ═══════════════════════════════════════════════════════
+//  SAMPLE GENERATION
+// ═══════════════════════════════════════════════════════
+function generateSamples(hole, depth) {
+  const samples = [];
+  for (let from = 0; from < depth; from += 5) {
+    const to = from + 5;
+    // DUP: when 'to' is a multiple of 100
+    if (to % 100 === 0) {
+      // Add the regular sample first
+      const regularFrom = to - 5;
+      // Actually the DUP replaces the last sample at the 100ft mark
+      // Convention: DUP sample is "95-100DUP" style
+      // Add normal samples from previous 100ft block up to 95
+      // We handle this inline - just add dup at multiples of 100
+    }
+    const id = `${hole} ${from}-${to}`;
+    samples.push({ id, isDup: false, status: 'missing' });
+
+    // After every 100ft, add a DUP (e.g., after 0-100 block, dup is 95-100DUP)
+    if (to % 100 === 0) {
+      const dupFrom = to - 5;
+      const dupId = `${hole} ${dupFrom}-${to}DUP`;
+      samples.push({ id: dupId, isDup: true, status: 'missing' });
+    }
+  }
+  return samples;
+}
+
+// ═══════════════════════════════════════════════════════
+//  SESSION MANAGEMENT
+// ═══════════════════════════════════════════════════════
+function startSession() {
+  const hole = document.getElementById('holeNumber').value.trim().toUpperCase();
+  const depth = parseInt(document.getElementById('expectedDepth').value);
+
+  if (!hole) { alert('Please enter a hole number.'); return; }
+  if (!depth || depth < 5) { alert('Please enter a valid expected depth (minimum 5 ft).'); return; }
+  if (depth % 5 !== 0) { alert('Depth must be a multiple of 5 ft.'); return; }
+
+  state.hole = hole;
+  state.expectedDepth = depth;
+  state.expectedSamples = generateSamples(hole, depth);
+  state.extraSamples = [];
+  state.currentFilter = 'all';
+
+  document.getElementById('displayHole').textContent = hole;
+  document.getElementById('displayDepth').innerHTML =
+    `Expected Depth: <span style="color:var(--text)">${depth} ft</span><br>` +
+    `Samples: <span style="color:var(--text)">${state.expectedSamples.length}</span>`;
+
+  updateStats();
+  renderGrid();
+  showScreen('screenScan');
+
+  // Load saved data if any
+  loadFromStorage();
+  updateStats();
+  renderGrid();
+}
+
+function resetSession() {
+  if (!confirm('Start a new session? Current scan data will be cleared.')) return;
+  clearStorage();
+  state = { hole:'', expectedDepth:0, expectedSamples:[], extraSamples:[], currentFilter:'all' };
+  document.getElementById('holeNumber').value = '';
+  document.getElementById('expectedDepth').value = '';
+  showScreen('screenSetup');
+}
+
+// ═══════════════════════════════════════════════════════
+//  SCANNING LOGIC
+// ═══════════════════════════════════════════════════════
+function submitScan() {
+  const input = document.getElementById('scanInput');
+  const raw = input.value.trim();
+  if (!raw) return;
+  processScan(raw);
+  input.value = '';
+  input.focus();
+}
+
+function processScan(raw) {
+  // Normalize: uppercase
+  const scanned = raw.toUpperCase();
+
+  // Reject samples from a different hole
+  if (!scanned.startsWith(state.hole + ' ') && !scanned.startsWith(state.hole.toUpperCase() + ' ')) {
+    showFeedback(`REJECTED — Not from hole ${state.hole}`, 'warn');
+    return;
+  }
+
+  // Check if it's in expected list
+  const idx = state.expectedSamples.findIndex(s => s.id.toUpperCase() === scanned);
+
+  if (idx !== -1) {
+    if (state.expectedSamples[idx].status === 'verified') {
+      showFeedback(`DUPLICATE SCAN — ${state.expectedSamples[idx].id} already verified`, 'warn');
+      return;
+    }
+    state.expectedSamples[idx].status = 'verified';
+    showFeedback(`✓ VERIFIED — ${state.expectedSamples[idx].id}`, 'ok');
+  } else {
+    // Extra sample (correct hole, but not in expected list — e.g. past planned depth)
+    if (!state.extraSamples.includes(scanned)) {
+      state.extraSamples.push(scanned);
+    }
+    showFeedback(`⬡ EXTRA SAMPLE — ${scanned} (beyond planned depth or unrecognized)`, 'extra');
+  }
+
+  saveToStorage();
+  updateStats();
+  renderGrid();
+}
+
+function showFeedback(msg, type) {
+  const el = document.getElementById('scanFeedback');
+  el.className = `scan-feedback ${type}`;
+  el.textContent = msg;
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => { el.className = 'scan-feedback'; }, 3500);
+}
+
+// ═══════════════════════════════════════════════════════
+//  STATS & RENDERING
+// ═══════════════════════════════════════════════════════
+function updateStats() {
+  const verified = state.expectedSamples.filter(s => s.status === 'verified').length;
+  const total = state.expectedSamples.length;
+  const missing = total - verified;
+  const extra = state.extraSamples.length;
+  const pct = total > 0 ? Math.round((verified / total) * 100) : 0;
+
+  document.getElementById('statTotal').textContent = total;
+  document.getElementById('statVerified').textContent = verified;
+  document.getElementById('statMissing').textContent = missing;
+  document.getElementById('statExtra').textContent = extra;
+  document.getElementById('progressFill').style.width = pct + '%';
+}
+
+function renderGrid() {
+  const grid = document.getElementById('sampleGrid');
+  const f = state.currentFilter;
+
+  let items = [];
+
+  if (f !== 'extra') {
+    items = state.expectedSamples.filter(s => {
+      if (f === 'all') return true;
+      if (f === 'missing') return s.status === 'missing';
+      if (f === 'verified') return s.status === 'verified';
+      return true;
+    });
+  }
+
+  if (f === 'extra' || f === 'all') {
+    const extraItems = state.extraSamples.map(id => ({ id, isDup: false, status: 'extra' }));
+    if (f === 'extra') items = extraItems;
+    else items = [...items, ...extraItems];
+  }
+
+  grid.innerHTML = items.map(s => {
+    const icon = s.status === 'verified' ? '✓' : s.status === 'extra' ? '⬡' : '✗';
+    const dupTag = s.isDup ? '<span class="chip-dup">DUP</span>' : '';
+    return `<div class="sample-chip ${s.status}">
+      <span class="chip-icon">${icon}</span>
+      <span class="chip-id">${s.id}</span>${dupTag}
+    </div>`;
+  }).join('');
+}
+
+function setFilter(f, btn) {
+  state.currentFilter = f;
+  document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  renderGrid();
+}
+
+// ═══════════════════════════════════════════════════════
+//  SUMMARY
+// ═══════════════════════════════════════════════════════
+function goToSummary() {
+  const verified = state.expectedSamples.filter(s => s.status === 'verified').length;
+  const total = state.expectedSamples.length;
+  const missing = state.expectedSamples.filter(s => s.status === 'missing');
+  const extra = state.extraSamples;
+  const hasIssues = missing.length > 0 || extra.length > 0;
+
+  const hero = document.getElementById('summaryHero');
+  hero.className = 'summary-hero' + (hasIssues ? ' has-issues' : '');
+
+  document.getElementById('summaryIcon').textContent = hasIssues ? '⚠️' : '✅';
+  document.getElementById('summaryTitle').textContent = hasIssues
+    ? 'Issues Detected'
+    : 'All Samples Verified';
+  document.getElementById('summarySubtitle').textContent =
+    `Hole ${state.hole} | ${verified}/${total} expected samples verified | ${extra.length} extra`;
+
+  document.getElementById('summaryStats').innerHTML = `
+    <div class="stat-box total"><div class="stat-num">${total}</div><div class="stat-label">Expected</div></div>
+    <div class="stat-box ok"><div class="stat-num">${verified}</div><div class="stat-label">Verified</div></div>
+    <div class="stat-box miss"><div class="stat-num">${missing.length}</div><div class="stat-label">Missing</div></div>
+    <div class="stat-box extra"><div class="stat-num">${extra.length}</div><div class="stat-label">Extra</div></div>
+  `;
+
+  const missSection = document.getElementById('missingSection');
+  if (missing.length > 0) {
+    missSection.style.display = 'block';
+    document.getElementById('missingItems').innerHTML =
+      missing.map(s => `<div class="miss-item">${s.id}${s.isDup?' <span style="color:var(--accent)">[DUP]</span>':''}</div>`).join('');
+  } else {
+    missSection.style.display = 'none';
+  }
+
+  const extraSection = document.getElementById('extraSection');
+  if (extra.length > 0) {
+    extraSection.style.display = 'block';
+    document.getElementById('extraItems').innerHTML =
+      extra.map(id => `<div class="miss-item extra-item">${id}</div>`).join('');
+  } else {
+    extraSection.style.display = 'none';
+  }
+
+  showScreen('screenSummary');
+}
+
+function exportSummary() {
+  const verified = state.expectedSamples.filter(s => s.status === 'verified');
+  const missing = state.expectedSamples.filter(s => s.status === 'missing');
+  const extra = state.extraSamples;
+  const now = new Date().toLocaleString();
+
+  let txt = `RC SAMPLE SCAN REPORT\n`;
+  txt += `=====================\n`;
+  txt += `Hole: ${state.hole}\n`;
+  txt += `Expected Depth: ${state.expectedDepth} ft\n`;
+  txt += `Date/Time: ${now}\n\n`;
+  txt += `SUMMARY\n-------\n`;
+  txt += `Expected: ${state.expectedSamples.length}\n`;
+  txt += `Verified: ${verified.length}\n`;
+  txt += `Missing:  ${missing.length}\n`;
+  txt += `Extra:    ${extra.length}\n\n`;
+
+  if (missing.length > 0) {
+    txt += `MISSING SAMPLES\n---------------\n`;
+    missing.forEach(s => txt += `  ${s.id}\n`);
+    txt += '\n';
+  }
+
+  if (extra.length > 0) {
+    txt += `EXTRA / UNRECOGNIZED SAMPLES\n----------------------------\n`;
+    extra.forEach(id => txt += `  ${id}\n`);
+    txt += '\n';
+  }
+
+  txt += `VERIFIED SAMPLES\n----------------\n`;
+  verified.forEach(s => txt += `  ${s.id}\n`);
+
+  const blob = new Blob([txt], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `scan_${state.hole.replace(/[^a-z0-9]/gi,'_')}_${Date.now()}.txt`;
+  a.click();
+}
+
+// ═══════════════════════════════════════════════════════
+//  CAMERA + BARCODE DECODING
+//  Strategy 1: Native BarcodeDetector API (Android Chrome, iOS 17+)
+//  Strategy 2: QuaggaJS canvas polling (all other browsers)
+// ═══════════════════════════════════════════════════════
+let cameraStream = null;
+let scanLoopActive = false;
+let scanCanvas = null;
+let scanCtx = null;
+let nativeDetector = null;
+
+function setStatus(msg, color = 'var(--text-dim)') {
+  const el = document.getElementById('cameraStatus');
+  el.textContent = msg;
+  el.style.color = color;
+}
+
+async function openCamera() {
+  document.getElementById('cameraModal').classList.add('active');
+  document.getElementById('cameraManualInput').value = '';
+  setStatus('Initializing camera…');
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus('Camera not available — use manual entry below.', 'var(--miss)');
+    return;
+  }
+
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        width:  { ideal: 1280 },
+        height: { ideal: 720 }
+      }
+    });
+
+    const video = document.getElementById('cameraPreview');
+    video.srcObject = cameraStream;
+    await video.play();
+
+    // Set up hidden canvas for frame capture
+    scanCanvas = document.createElement('canvas');
+    scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
+
+    // Try native BarcodeDetector first (fastest, no library needed)
+    if ('BarcodeDetector' in window) {
+      try {
+        nativeDetector = new BarcodeDetector({
+          formats: ['code_128']
+        });
+        setStatus('🟢 Scanning — point at barcode…', 'var(--ok)');
+        scanLoopActive = true;
+        nativeScanLoop(video);
+        return;
+      } catch(e) {
+        // BarcodeDetector exists but failed — fall through to Quagga
+      }
+    }
+
+    // Fallback: QuaggaJS
+    if (typeof Quagga !== 'undefined') {
+      startQuagga(video);
+    } else {
+      setStatus('Scanner unavailable — use manual entry below.', 'var(--miss)');
+    }
+
+  } catch(err) {
+    setStatus('Camera access denied — use manual entry below.', 'var(--miss)');
+    console.error('Camera error:', err);
+  }
+}
+
+// ── Strategy 1: Native BarcodeDetector (fast, built-in) ──
+async function nativeScanLoop(video) {
+  while (scanLoopActive) {
+    try {
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        const barcodes = await nativeDetector.detect(video);
+        if (barcodes.length > 0 && scanLoopActive) {
+          const val = barcodes[0].rawValue;
+          setStatus('✓ Detected: ' + val, 'var(--ok)');
+          scanLoopActive = false;
+          setTimeout(() => { closeCamera(); processScan(val); }, 350);
+          return;
+        }
+      }
+    } catch(e) {}
+    // Poll every 200ms
+    await new Promise(r => setTimeout(r, 200));
+  }
+}
+
+// ── Strategy 2: QuaggaJS canvas polling ──
+function startQuagga(video) {
+  setStatus('🟢 Scanning — point at barcode…', 'var(--ok)');
+  scanLoopActive = true;
+
+  function pollFrame() {
+    if (!scanLoopActive) return;
+
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh) { setTimeout(pollFrame, 200); return; }
+
+    scanCanvas.width  = vw;
+    scanCanvas.height = vh;
+    scanCtx.drawImage(video, 0, 0, vw, vh);
+
+    const imageData = scanCtx.getImageData(0, 0, vw, vh);
+
+    Quagga.decodeSingle({
+      decoder: {
+        readers: ['code_128_reader']
+      },
+      locate: true,
+      src: scanCanvas.toDataURL('image/png'),
+    }, result => {
+      if (!scanLoopActive) return;
+
+      if (result && result.codeResult) {
+        const val = result.codeResult.code;
+        setStatus('✓ Detected: ' + val, 'var(--ok)');
+        scanLoopActive = false;
+        setTimeout(() => { closeCamera(); processScan(val); }, 350);
+      } else {
+        // No barcode found in this frame — try again
+        setTimeout(pollFrame, 300);
+      }
+    });
+  }
+
+  // Wait for video to have real frame data
+  video.addEventListener('playing', () => setTimeout(pollFrame, 500), { once: true });
+  if (video.readyState >= 3) setTimeout(pollFrame, 500);
+}
+
+function closeCamera() {
+  scanLoopActive = false;
+  nativeDetector = null;
+
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = null;
+  }
+
+  const video = document.getElementById('cameraPreview');
+  video.srcObject = null;
+  scanCanvas = null;
+  scanCtx = null;
+
+  document.getElementById('cameraModal').classList.remove('active');
+}
+
+function submitCameraManual() {
+  const val = document.getElementById('cameraManualInput').value.trim();
+  if (!val) return;
+  closeCamera();
+  processScan(val);
+}
+
+// ═══════════════════════════════════════════════════════
+//  BLUETOOTH SCANNER HELPER
+// ═══════════════════════════════════════════════════════
+function focusScanInput() {
+  document.getElementById('scanInput').focus();
+  showFeedback('Bluetooth scanner ready — scan a barcode now', 'ok');
+}
+
+// ═══════════════════════════════════════════════════════
+//  KEYBOARD SHORTCUTS
+// ═══════════════════════════════════════════════════════
+document.getElementById('scanInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitScan();
+});
+
+document.getElementById('holeNumber').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('expectedDepth').focus();
+});
+
+document.getElementById('expectedDepth').addEventListener('keydown', e => {
+  if (e.key === 'Enter') startSession();
+});
+
+document.getElementById('cameraManualInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitCameraManual();
+});
+
+// ═══════════════════════════════════════════════════════
+//  LOCAL STORAGE (OFFLINE PERSISTENCE)
+// ═══════════════════════════════════════════════════════
+function saveToStorage() {
+  try {
+    localStorage.setItem('rc_scanner_state', JSON.stringify({
+      hole: state.hole,
+      expectedDepth: state.expectedDepth,
+      expectedSamples: state.expectedSamples,
+      extraSamples: state.extraSamples
+    }));
+  } catch(e) {}
+}
+
+function loadFromStorage() {
+  try {
+    const saved = localStorage.getItem('rc_scanner_state');
+    if (!saved) return;
+    const data = JSON.parse(saved);
+    if (data.hole === state.hole && data.expectedDepth === state.expectedDepth) {
+      state.expectedSamples = data.expectedSamples;
+      state.extraSamples = data.extraSamples;
+      showFeedback('Previous session data restored', 'ok');
+    }
+  } catch(e) {}
+}
+
+function clearStorage() {
+  try { localStorage.removeItem('rc_scanner_state'); } catch(e) {}
+}
+
+// ═══════════════════════════════════════════════════════
+//  SCREEN NAV
+// ═══════════════════════════════════════════════════════
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  window.scrollTo(0,0);
+}
+</script>
+<script>
+// Register service worker for offline PWA support
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => console.log('SW registered:', reg.scope))
+      .catch(err => console.log('SW failed:', err));
+  });
+}
+</script>
+</body>
+</html>
